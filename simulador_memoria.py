@@ -127,6 +127,45 @@ class TabelaPaginasSegundaChance(TabelaPaginas):
 
         print("-" * 40)
 
+class TabelaPaginasOtimo(TabelaPaginas):
+
+    def __init__(self, num_frames, referencias):
+        super().__init__(num_frames)
+        # 'referencias' é a lista completa (na ordem) de páginas acessadas
+        self.referencias = referencias
+
+    def substituir_pagina(self, nova_pagina):
+        futuro = self.referencias[self.total_acessos:]
+
+        vitima = None
+        pior_distancia = -1
+
+        for frame in self.frames:
+            pagina = frame.pagina_alocada
+            if pagina in futuro:
+                distancia = futuro.index(pagina)
+            else:
+                distancia = float('inf') 
+
+            if vitima is None:
+                vitima = frame
+                pior_distancia = distancia
+                continue
+
+            if distancia > pior_distancia:
+                vitima = frame
+                pior_distancia = distancia
+            elif distancia == pior_distancia and frame.timestamp_carga < vitima.timestamp_carga:
+                # Desempate: remove quem está na memória há mais tempo
+                vitima = frame
+
+        vitima.pagina_alocada = nova_pagina
+        vitima.bit_referencia = 1
+        vitima.timestamp_carga = self._contador_carga
+        self._contador_carga += 1
+
+        return vitima.id_frame
+
 class Simulador:
     def __init__(self, caminho_arquivo):
         self.caminho_arquivo = caminho_arquivo
