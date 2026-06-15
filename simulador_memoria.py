@@ -91,10 +91,25 @@ class TabelaPaginas:
 
 
 class TabelaPaginasSegundaChance(TabelaPaginas):
+    """
+    Algoritmo Segunda Chance / Clock (Seção 9.4.4 do Silberschatz).
+
+    Cada frame possui um bit de referência (R). Um "ponteiro de relógio"
+    percorre os frames de forma circular:
+      - Se o frame apontado tem R = 1, ele "ganha uma segunda chance":
+        o bit é zerado (R = 0) e o ponteiro avança.
+      - Se o frame apontado tem R = 0, ele é a vítima: a página nova é
+        carregada nele, R volta a 1, e o ponteiro avança para a próxima
+        posição (pronta para a próxima substituição).
+
+    Convenção adotada: toda página recém-carregada (seja no preenchimento
+    inicial dos frames vazios, seja em uma substituição) entra com R = 1,
+    representando o fato de que ela acabou de ser referenciada.
+    """
 
     def __init__(self, num_frames):
         super().__init__(num_frames)
-        self.ponteiro = 0
+        self.ponteiro = 0  # posição atual do ponteiro do relógio
 
     def substituir_pagina(self, nova_pagina):
         n = len(self.frames)
@@ -103,6 +118,7 @@ class TabelaPaginasSegundaChance(TabelaPaginas):
             frame_atual = self.frames[self.ponteiro]
 
             if frame_atual.bit_referencia == 0:
+                # Encontrou a vítima: substitui e avança o ponteiro
                 frame_atual.pagina_alocada = nova_pagina
                 frame_atual.bit_referencia = 1
                 frame_atual.timestamp_carga = self._contador_carga
@@ -112,6 +128,7 @@ class TabelaPaginasSegundaChance(TabelaPaginas):
                 self.ponteiro = (self.ponteiro + 1) % n
                 return vitima_id
             else:
+                # Dá a "segunda chance": zera o bit e segue para o próximo
                 frame_atual.bit_referencia = 0
                 self.ponteiro = (self.ponteiro + 1) % n
 
@@ -127,7 +144,27 @@ class TabelaPaginasSegundaChance(TabelaPaginas):
 
         print("-" * 40)
 
+
 class TabelaPaginasOtimo(TabelaPaginas):
+    """
+    Algoritmo Ótimo / OPT (Seção 9.4.2 do Silberschatz).
+
+    Para cada página atualmente em memória, olha-se para o restante da
+    cadeia de referências (o que ainda vai ser acessado a partir do
+    próximo passo) e calcula-se a distância até o próximo uso dessa página:
+      - Se a página ainda vai ser referenciada no futuro, a distância é a
+        posição dessa próxima referência.
+      - Se a página NUNCA mais vai ser referenciada, a distância é
+        considerada infinita.
+
+    A vítima escolhida é a página com a MAIOR distância até o próximo uso
+    (ou seja, a que demoraria mais para ser usada de novo, ou nunca mais
+    seria usada).
+
+    Critério de desempate: se duas ou mais páginas empatam na distância
+    (por exemplo, nenhuma das duas será usada novamente), é removida a
+    página que está há mais tempo na memória (carregada há mais tempo).
+    """
 
     def __init__(self, num_frames, referencias):
         super().__init__(num_frames)
@@ -135,6 +172,9 @@ class TabelaPaginasOtimo(TabelaPaginas):
         self.referencias = referencias
 
     def substituir_pagina(self, nova_pagina):
+        # self.total_acessos já foi incrementado para o acesso atual (1-based),
+        # então self.referencias[self.total_acessos:] são os acessos que ainda
+        # vão acontecer depois deste.
         futuro = self.referencias[self.total_acessos:]
 
         vitima = None
@@ -145,7 +185,7 @@ class TabelaPaginasOtimo(TabelaPaginas):
             if pagina in futuro:
                 distancia = futuro.index(pagina)
             else:
-                distancia = float('inf') 
+                distancia = float('inf')  # nunca mais será usada
 
             if vitima is None:
                 vitima = frame
@@ -166,9 +206,25 @@ class TabelaPaginasOtimo(TabelaPaginas):
 
         return vitima.id_frame
 
+
 class Simulador:
-    def __init__(self, caminho_arquivo):
+
+    ALGORITMOS = {
+        "clock": ("Segunda Chance (Clock)", TabelaPaginasSegundaChance),
+        "segunda_chance": ("Segunda Chance (Clock)", TabelaPaginasSegundaChance),
+        "opt": ("Ótimo (OPT)", TabelaPaginasOtimo),
+        "otimo": ("Ótimo (OPT)", TabelaPaginasOtimo),
+    }
+
+    def __init__(self, caminho_arquivo, algoritmo):
         self.caminho_arquivo = caminho_arquivo
+
+        chave = algoritmo.lower()
+        if chave not in self.ALGORITMOS:
+            opcoes = ", ".join(sorted(set(self.ALGORITMOS.keys())))
+            raise ValueError(f"Algoritmo '{algoritmo}' inválido. Opções: {opcoes}")
+
+        self.nome_algoritmo, self.classe_tabela = self.ALGORITMOS[chave]
 
     def executar(self):
         try:
@@ -187,21 +243,26 @@ class Simulador:
 
         # A primeira linha válida define o número de frames na memória RAM simulada
         num_frames = int(linhas[0])
-        tabela_paginas = TabelaPaginasSegundaChance(num_frames)
 
+        # As linhas seguintes são a sequência de acessos às páginas
+        referencias = [int(l) for l in linhas[1:]]
+
+        # Instancia a tabela de páginas com o algoritmo escolhido
+        if self.classe_tabela is TabelaPaginasOtimo:
+            tabela_paginas = TabelaPaginasOtimo(num_frames, referencias)
+        else:
+            tabela_paginas = TabelaPaginasSegundaChance(num_frames)
+
+        print(f"Algoritmo: {self.nome_algoritmo}")
         print(f"Iniciando simulação com {num_frames} frames disponíveis.")
         print("=" * 40)
 
-        # As linhas seguintes são a sequência de acessos às páginas
-        passo = 1
-        for linha in linhas[1:]:
-            numero_pagina = int(linha)
-
+        for passo, numero_pagina in enumerate(referencias, start=1):
             foi_hit, frame_id = tabela_paginas.acessar_pagina(numero_pagina)
             tabela_paginas.imprimir_mapa_memoria(passo, numero_pagina, foi_hit, frame_id)
-            passo += 1
 
         print("\n================ STATS FINAIS ================")
+        print(f"Algoritmo: {self.nome_algoritmo}")
         print(f"Total de Acessos: {tabela_paginas.total_acessos}")
         print(f"Total de Page Faults: {tabela_paginas.total_page_faults}")
         if tabela_paginas.total_acessos > 0:
@@ -212,6 +273,7 @@ class Simulador:
 
 if __name__ == "__main__":
     arquivo_entrada = sys.argv[1] if len(sys.argv) > 1 else "entrada.txt"
-    simulador = Simulador(arquivo_entrada)
-    simulador.executar()
+    algoritmo = sys.argv[2] if len(sys.argv) > 2 else "clock"
 
+    simulador = Simulador(arquivo_entrada, algoritmo)
+    simulador.executar()
